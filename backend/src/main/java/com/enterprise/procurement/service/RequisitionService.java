@@ -248,12 +248,29 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         String action = request.getAction().trim().toUpperCase();
 
         if ("APPROVE".equals(action) || "APPROVED".equals(action)) {
-            createHistory(requisition, user, "Approved", request.getRemarks());
+            String roleName = "Approver";
+            if (requiredRoleId == 3L) roleName = "Manager";
+            else if (requiredRoleId == 4L) roleName = "Finance";
+            else if (requiredRoleId == 2L) roleName = "Procurement Admin"; // Assuming 2 is Admin
+            else roleName = "Admin";
+            
+            createHistory(requisition, user, "Approved by " + roleName, roleName + " approval completed");
 
             boolean wasLastStep = (completedSteps + 1) == chainRoleIds.size();
             if (wasLastStep) {
-                requisition.setStatus(RequisitionStatus.APPROVED);
-                eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+                if (requisition.getSupplier() != null) {
+                    requisition.setStatus(RequisitionStatus.APPROVED);
+                    eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+                } else {
+                    requisition.setStatus(RequisitionStatus.AWAITING_SUPPLIER_ASSIGNMENT);
+                    notificationService.createNotification(
+                        "admin1", // Using admin1 or we can broadcast, let's just notify the system admin
+                        "Supplier Assignment Required",
+                        "Requisition " + requisition.getRequisitionNumber() + " is fully approved and requires supplier assignment.",
+                        "Requisition",
+                        requisition.getRequisitionId()
+                    );
+                }
             }
             // If it wasn't the last step, status stays PENDING_APPROVAL —
             // the next approver in the chain now sees it in their pending list.
@@ -302,17 +319,74 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         AuditLog audit = AuditLog.builder()
             .user(admin)
             .module("Requisition")
-            .action("SUPPLIER_CORRECTED")
+            .action("SUPPLIER_ASSIGNED")
             .entityName("Requisition")
             .entityId(id)
-            .remarks("Supplier assigned to repair legacy requisition before PO generation.")
+            .remarks("Supplier assigned by Procurement Admin.")
             .build();
         auditLogService.save(audit);
         
-        // Add to history so it appears in the approval timeline
-        createHistory(requisition, admin, "Supplier Corrected", "Supplier missing in legacy requisition was assigned by Admin.");
-        
+        // We do NOT approve the requisition here anymore, just assign the supplier.
         return repository.save(requisition);
+    }
+
+    @Transactional
+    public Requisition verifySupplier(Long id, boolean approved, String remarks, String adminUsername) {
+        Requisition requisition = findById(id);
+
+        if (!RequisitionStatus.AWAITING_SUPPLIER_ASSIGNMENT.equalsIgnoreCase(requisition.getStatus())) {
+            throw new BadRequestException("Requisition is not awaiting supplier assignment.");
+        }
+
+        User admin = userRepository.findByUsername(adminUsername)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
+
+        if (approved) {
+            if (requisition.getSupplier() == null) {
+                throw new BadRequestException("Cannot approve supplier verification when no supplier is assigned.");
+            }
+
+            requisition.setStatus(RequisitionStatus.APPROVED);
+            repository.save(requisition); // save before event
+
+            AuditLog audit = AuditLog.builder()
+                    .user(admin)
+                    .module("Requisition")
+                    .action("SUPPLIER_VERIFIED")
+                    .entityName("Requisition")
+                    .entityId(id)
+                    .remarks("Supplier verified by Procurement Admin.")
+                    .build();
+            auditLogService.save(audit);
+
+            createHistory(requisition, admin, "Supplier Verified", "Supplier verified successfully.");
+
+            // Triggers PO creation via RequisitionEventListener
+            eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+        } else {
+            // Reject Supplier
+            if (remarks == null || remarks.trim().isEmpty()) {
+                throw new BadRequestException("Remarks are required when rejecting supplier.");
+            }
+
+            AuditLog audit = AuditLog.builder()
+                    .user(admin)
+                    .module("Requisition")
+                    .action("SUPPLIER_REJECTED")
+                    .entityName("Requisition")
+                    .entityId(id)
+                    .remarks(remarks)
+                    .build();
+            auditLogService.save(audit);
+
+            createHistory(requisition, admin, "Supplier Rejected", remarks);
+
+            // Keeps status as AWAITING_SUPPLIER_ASSIGNMENT but logs the rejection
+            requisition.setSupplier(null); // Clear the rejected supplier
+            repository.save(requisition);
+        }
+
+        return requisition;
     }
 
     public List<String> getApprovalChainNames(Long categoryId, BigDecimal amount, String username) {
@@ -385,13 +459,6 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
         
-        boolean isAdmin = user.getUserRoles().stream()
-                .anyMatch(ur -> "Admin".equals(ur.getRole().getRoleName()));
-                
-        if (isAdmin) {
-            return findAll();
-        }
-
         return requisitionHistoryRepository.findByActionBy_UsernameOrderByActionDateDesc(username).stream()
                 .map(RequisitionHistory::getRequisition)
                 .distinct()

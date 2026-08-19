@@ -160,6 +160,16 @@ public class RequisitionController {
         return ResponseEntity.ok(service.updateSupplier(id, supplierId, authentication.getName()));
     }
 
+    @PostMapping("/{id}/supplier/verify")
+    @PreAuthorize("hasRole('Admin')")
+    public ResponseEntity<Requisition> verifySupplier(@PathVariable Long id,
+                                                      @RequestBody java.util.Map<String, Object> payload,
+                                                      Authentication authentication) {
+        boolean approved = Boolean.TRUE.equals(payload.get("approved"));
+        String remarks = (String) payload.get("remarks");
+        return ResponseEntity.ok(service.verifySupplier(id, approved, remarks, authentication.getName()));
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<Requisition> update(@PathVariable Long id,

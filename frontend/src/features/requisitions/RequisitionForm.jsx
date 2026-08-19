@@ -24,6 +24,7 @@ export default function RequisitionForm({ user }) {
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState("");
   const [priority, setPriority] = useState("MEDIUM");
   const [neededBy, setNeededBy] = useState("");
   const [justification, setJustification] = useState("");
@@ -143,8 +144,8 @@ export default function RequisitionForm({ user }) {
     setError("");
     setSuccess("");
 
-    if (!title || !neededBy || !categoryId || !supplierId) {
-      setError("Requisition Title, Category, Supplier, and Needed By Date are required.");
+    if (!title || !neededBy || !categoryId) {
+      setError("Requisition Title, Category, and Needed By Date are required.");
       return;
     }
 
@@ -167,6 +168,7 @@ export default function RequisitionForm({ user }) {
         deliveryAddress,
         attachmentName,
         remarks,
+        preferredSupplierName: (!supplierId && supplierSearchTerm) ? supplierSearchTerm : null
       });
 
       const payload = {
@@ -198,6 +200,7 @@ export default function RequisitionForm({ user }) {
       setTitle("");
       setCategoryId("");
       setSupplierId("");
+      setSupplierSearchTerm("");
       setPriority("MEDIUM");
       setNeededBy("");
       setJustification("");
@@ -309,13 +312,22 @@ export default function RequisitionForm({ user }) {
                 </div>
 
                 <div className="form-group">
-                  <label>Supplier *</label>
-                  <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                    <option value="">Direct / Select Supplier...</option>
+                  <label>Supplier (Optional)</label>
+                  <input
+                    list="supplier-options"
+                    placeholder="Search or select supplier..."
+                    value={supplierSearchTerm}
+                    onChange={(e) => {
+                      setSupplierSearchTerm(e.target.value);
+                      const match = suppliers.find(s => s.supplierName === e.target.value);
+                      setSupplierId(match ? match.supplierId : "");
+                    }}
+                  />
+                  <datalist id="supplier-options">
                     {suppliers.map((s) => (
-                      <option key={s.supplierId} value={s.supplierId}>{s.supplierName}</option>
+                      <option key={s.supplierId} value={s.supplierName} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
               </div>
 

@@ -8,6 +8,7 @@ public final class RequisitionStatus {
     public static final String APPROVED = "APPROVED";
     public static final String REJECTED = "REJECTED";
     public static final String RETURNED = "RETURNED";
+    public static final String AWAITING_SUPPLIER_ASSIGNMENT = "AWAITING_SUPPLIER_ASSIGNMENT";
     public static final String ORDER_CREATED = "ORDER_CREATED";
 
     private RequisitionStatus() {

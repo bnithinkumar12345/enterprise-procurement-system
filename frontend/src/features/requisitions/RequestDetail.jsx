@@ -38,6 +38,13 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
   const [suppliers, setSuppliers] = useState([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [savingSupplier, setSavingSupplier] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+
+  useEffect(() => {
+    if (requisition?.supplier?.supplierId) {
+      setSelectedSupplierId(requisition.supplier.supplierId);
+    }
+  }, [requisition]);
 
   async function handleStartSupplierCorrection() {
     setIsCorrectingSupplier(true);
@@ -49,18 +56,38 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
     }
   }
 
-  async function handleSaveSupplier() {
-    if (!selectedSupplierId) return;
+  async function handleVerifySupplier(approved) {
+    if (approved && !selectedSupplierId && supplierName === 'Missing') {
+      alert("Please select a supplier from the master list before approving.");
+      return;
+    }
+    if (!approved && !remarks.trim()) {
+      setActionError("Remarks are required for rejection.");
+      return;
+    }
+    
     setSavingSupplier(true);
+    setActionError('');
     try {
       const targetId = isPropMode ? propRequest.requisitionId : requisition?.requisitionId || id;
-      await apiFetch(`/api/requisitions/${targetId}/supplier`, {
-        method: 'PATCH',
-        body: JSON.stringify({ supplierId: selectedSupplierId })
+      
+      // If a supplier was newly selected from dropdown, assign it first
+      if (approved && selectedSupplierId) {
+        await apiFetch(`/api/requisitions/${targetId}/supplier`, {
+          method: 'PATCH',
+          body: JSON.stringify({ supplierId: selectedSupplierId })
+        }, user.token);
+      }
+
+      // Then verify
+      await apiFetch(`/api/requisitions/${targetId}/supplier/verify`, {
+        method: 'POST',
+        body: JSON.stringify({ approved, remarks: remarks || 'Verified' })
       }, user.token);
+      
       window.location.reload(); 
     } catch (e) {
-      alert("Failed to update supplier: " + e.message);
+      alert("Failed to verify supplier: " + e.message);
     } finally {
       setSavingSupplier(false);
     }
@@ -103,14 +130,24 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
       try {
         setLoading(true);
         setError('');
-        const [reqData, historyData, lineItemData] = await Promise.all([
+        const promises = [
           getRequisitionById(id),
           getRequisitionHistory(id),
           getRequisitionLineItems(id),
-        ]);
-        setRequisition(reqData);
-        setHistory(historyData);
-        setLineItems(lineItemData);
+        ];
+        // Only fetch suppliers if admin
+        const adminCheck = user && (user.roles?.includes('ROLE_Admin') || user.role === 'Admin' || user.role === 'Procurement Admin');
+        if (adminCheck) {
+            promises.push(apiFetch('/api/suppliers', {}, user.token));
+        }
+
+        const results = await Promise.all(promises);
+        setRequisition(results[0]);
+        setHistory(results[1]);
+        setLineItems(results[2]);
+        if (adminCheck && results[3]) {
+            setSuppliers(results[3].filter(s => s.status === 'ACTIVE'));
+        }
       } catch (err) {
         console.error('Failed to fetch requisition data:', err);
         setError('Failed to load requisition details. Please try again later.');
@@ -119,7 +156,7 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
       }
     }
     fetchAll();
-  }, [id, isPropMode]);
+  }, [id, isPropMode, user]);
 
   if (loading) {
     return (
@@ -191,6 +228,7 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
   let deliveryAddress = '—';
   let attachmentName = '';
   let internalRemarks = '—';
+  let preferredSupplierName = null;
 
   try {
     if (rawJustification && rawJustification.startsWith('{')) {
@@ -201,6 +239,7 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
       deliveryAddress = parsed.deliveryAddress || '—';
       attachmentName = parsed.attachmentName || '';
       internalRemarks = parsed.remarks || '—';
+      preferredSupplierName = parsed.preferredSupplierName || null;
     }
   } catch {
     // Treat as raw text
@@ -211,6 +250,94 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
     (sum, item) => sum + (item.quantity || 0) * (item.unitPrice || 0),
     0
   );
+
+  const isActionable = user && (
+    user.roles?.includes('ROLE_Manager') || 
+    user.roles?.includes('ROLE_Finance') || 
+    user.roles?.includes('ROLE_Admin') ||
+    user.role === 'Manager' || 
+    user.role === 'Finance' || 
+    user.role === 'Admin' || 
+    user.role === 'Approver' ||
+    user.role === 'Procurement Admin'
+  );
+
+  const isAdmin = user && (
+    user.roles?.includes('ROLE_Admin') || 
+    user.role === 'Admin' || 
+    user.role === 'Procurement Admin'
+  );
+
+  const supplierVerificationNode = (displayStatus === 'AWAITING_SUPPLIER_ASSIGNMENT' && isAdmin) ? (
+    <>
+      {showRejectModal && (
+        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '8px', width: '100%', maxWidth: '400px' }}>
+            <h3 style={{ marginTop: 0, color: '#dc2626' }}>Reject Supplier</h3>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>Reason:</label>
+              <textarea
+                className="form-control"
+                placeholder="Enter rejection reason..."
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                rows={3}
+                style={{ width: '100%', fontSize: '14px', padding: '8px' }}
+              />
+            </div>
+            {actionError && <div className="error-alert" style={{ marginBottom: '16px', fontSize: '13px' }}>{actionError}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button className="btn-secondary" onClick={() => { setShowRejectModal(false); setActionError(''); }}>Cancel</button>
+              <button 
+                className="btn-primary" 
+                onClick={() => handleVerifySupplier(false)} 
+                disabled={savingSupplier}
+                style={{ backgroundColor: '#dc2626' }}
+              >
+                {savingSupplier ? 'Processing...' : 'Reject Supplier'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#374151', marginBottom: '4px' }}>Supplier:</label>
+          <select 
+             value={selectedSupplierId}
+             onChange={e => setSelectedSupplierId(e.target.value)}
+             style={{ padding: '6px', fontSize: '13px', borderRadius: '4px', border: '1px solid #d1d5db', width: '100%' }}
+          >
+             {supplierName === 'Missing' && preferredSupplierName && <option value="">{preferredSupplierName}</option>}
+             {supplierName === 'Missing' && !preferredSupplierName && <option value="">-- Select Supplier --</option>}
+             {suppliers.map(s => <option key={s.supplierId} value={s.supplierId}>{s.supplierName}</option>)}
+          </select>
+        </div>
+
+        {actionError && !showRejectModal && <div className="error-alert" style={{ fontSize: '12px', padding: '6px' }}>{actionError}</div>}
+        
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button 
+            className="btn-primary" 
+            onClick={() => handleVerifySupplier(true)} 
+            disabled={savingSupplier}
+            style={{ backgroundColor: '#16a34a', flex: 1, padding: '6px', fontSize: '12px', justifyContent: 'center' }}
+          >
+            {savingSupplier ? 'Processing...' : '✓ Approve Supplier'}
+          </button>
+          <button 
+            className="btn-secondary" 
+            onClick={() => setShowRejectModal(true)} 
+            disabled={savingSupplier}
+            style={{ color: '#dc2626', borderColor: '#f87171', flex: 1, padding: '6px', fontSize: '12px', justifyContent: 'center' }}
+          >
+            ✕ Reject Supplier
+          </button>
+        </div>
+      </div>
+    </>
+  ) : null;
 
   return (
     <div className="requisition-detail-page">
@@ -249,40 +376,12 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
               <div className="meta-field">
                 <span className="field-lbl">Preferred Supplier</span>
                 <span className="field-val">
-                  {supplierName === 'Missing' && user?.roles?.includes('ROLE_Admin') && displayStatus === 'PENDING_APPROVAL' ? (
-                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                        <span style={{ color: '#ef4444', fontWeight: 600 }}>Missing</span>
-                        {!isCorrectingSupplier ? (
-                          <button 
-                            className="btn-secondary" 
-                            style={{ padding: '4px 8px', fontSize: '12px', width: 'fit-content' }}
-                            onClick={handleStartSupplierCorrection}
-                          >
-                            Assign Supplier
-                          </button>
-                        ) : (
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <select 
-                               value={selectedSupplierId}
-                               onChange={e => setSelectedSupplierId(e.target.value)}
-                               style={{ padding: '4px', fontSize: '12px', borderRadius: '4px', border: '1px solid #d1d5db' }}
-                            >
-                               <option value="">-- Select --</option>
-                               {suppliers.map(s => <option key={s.supplierId} value={s.supplierId}>{s.supplierName}</option>)}
-                            </select>
-                            <button 
-                              className="btn-primary" 
-                              style={{ padding: '4px 8px', fontSize: '12px' }}
-                              onClick={handleSaveSupplier}
-                              disabled={savingSupplier || !selectedSupplierId}
-                            >
-                              {savingSupplier ? '...' : 'Save'}
-                            </button>
-                          </div>
-                        )}
-                     </div>
+                  {supplierName !== 'Missing' ? (
+                     supplierName
+                  ) : preferredSupplierName ? (
+                     <span style={{ color: '#d97706', fontWeight: 600 }}>{preferredSupplierName} (Unverified Entry)</span>
                   ) : (
-                    supplierName
+                     <span style={{ color: '#ef4444', fontWeight: 600 }}>Not Provided</span>
                   )}
                 </span>
               </div>
@@ -411,11 +510,12 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
               historyEvents={displayHistory}
               submittedDate={submittedDate}
               submittedBy={submittedBy}
+              supplierVerificationNode={supplierVerificationNode}
             />
           </div>
 
           {/* Card 6: Action Panel */}
-          {user && (user.role === 'Approver' || user.role === 'Finance' || user.role === 'Procurement Admin') && displayStatus === 'PENDING_APPROVAL' && (
+          {isActionable && displayStatus === 'PENDING_APPROVAL' && (
             <div className="detail-card approval-actions-card" style={{ borderLeft: '4px solid #d97706' }}>
               <h3 style={{ color: '#d97706' }}>Authorization Actions</h3>
               <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 16px 0' }}>
