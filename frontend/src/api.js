@@ -68,7 +68,18 @@ export async function apiFetch(path, options = {}, token) {
   const data = rawBody ? JSON.parse(rawBody) : null;
 
   if (!response.ok) {
-    const message = (data && (data.message || data.error)) || `Request failed with status ${response.status}`;
+    let message = (data && (data.message || data.error)) || `Request failed with status ${response.status}`;
+    
+    // Append field-specific validation errors if provided by the backend
+    if (data && data.errors && typeof data.errors === 'object') {
+      const fieldErrors = Object.entries(data.errors)
+        .map(([field, err]) => `${field}: ${err}`)
+        .join(', ');
+      if (fieldErrors) {
+        message = `${message} — ${fieldErrors}`;
+      }
+    }
+    
     throw new Error(message);
   }
 
