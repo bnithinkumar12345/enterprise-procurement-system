@@ -34,7 +34,7 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
   const [actioning, setActioning] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  const [isCorrectingSupplier, setIsCorrectingSupplier] = useState(false);
+  
   const [suppliers, setSuppliers] = useState([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [savingSupplier, setSavingSupplier] = useState(false);
@@ -46,15 +46,6 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
     }
   }, [requisition]);
 
-  async function handleStartSupplierCorrection() {
-    setIsCorrectingSupplier(true);
-    try {
-      const res = await apiFetch('/api/suppliers', {}, user.token);
-      setSuppliers(res.filter(s => s.status === 'ACTIVE'));
-    } catch (e) {
-      console.error(e);
-    }
-  }
 
   async function handleVerifySupplier(approved) {
     if (approved && !selectedSupplierId && supplierName === 'Missing') {
