@@ -1,6 +1,32 @@
-# Local CLI wrappers
-*.cmd
+﻿# IDE
 .vscode/
 .idea/
+<<<<<<< HEAD
 target/
 ".idea/" 
+=======
+
+# Backend
+backend/target/
+*.jar
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Config
+.env
+.env.*
+!.env.example
+application.properties
+application.yml
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+>>>>>>> aaead4c8ac26bf41d7ea353cf083bce3b6ebdff3

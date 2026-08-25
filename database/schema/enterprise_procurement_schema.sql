@@ -2,6 +2,11 @@
 -- PostgreSQL database dump
 --
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> aaead4c8ac26bf41d7ea353cf083bce3b6ebdff3
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
 
