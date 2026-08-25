@@ -66,15 +66,15 @@ public class RequisitionService extends BaseService<Requisition, Long> {
     // ---------------------------------------------------------------
     public List<com.enterprise.procurement.dto.TimelineEvent> getRequisitionTimeline(Long id) {
         Requisition req = findById(id);
-        
+
         List<RequisitionHistory> history = requisitionHistoryRepository.findByRequisition(req);
         List<AuditLog> audits = auditLogService.findAll().stream() // Ideally we would have a repository method for this
                 .filter(a -> ("Requisition".equals(a.getEntityName()) && id.equals(a.getEntityId())) ||
-                             (a.getRemarks() != null && (a.getRemarks().contains("REQ-" + id) || a.getRemarks().contains("Requisition " + id))))
+                        (a.getRemarks() != null && (a.getRemarks().contains("REQ-" + id) || a.getRemarks().contains("Requisition " + id))))
                 .collect(Collectors.toList());
 
         List<com.enterprise.procurement.dto.TimelineEvent> events = new java.util.ArrayList<>();
-        
+
         for (RequisitionHistory h : history) {
             String actor = h.getActionBy() != null ? (h.getActionBy().getFullName() != null ? h.getActionBy().getFullName() : h.getActionBy().getUsername()) : "System";
             events.add(com.enterprise.procurement.dto.TimelineEvent.builder()
@@ -84,7 +84,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
                     .actionDate(h.getActionDate())
                     .build());
         }
-        
+
         for (AuditLog a : audits) {
             events.add(com.enterprise.procurement.dto.TimelineEvent.builder()
                     .step(a.getModule() + " " + a.getAction())
@@ -96,7 +96,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
 
         // Merge and sort
         events.sort(java.util.Comparator.comparing(com.enterprise.procurement.dto.TimelineEvent::getActionDate));
-        
+
         // Deduplicate by remarks if they overlap
         java.util.Map<String, com.enterprise.procurement.dto.TimelineEvent> unique = new java.util.LinkedHashMap<>();
         for(com.enterprise.procurement.dto.TimelineEvent e : events) {
@@ -183,7 +183,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
                 requisition.getDepartment().getDepartmentId(),
                 requisition.getCategory().getCategoryId(),
                 requisition.getTotalAmount());
-        
+
         if (ruleOpt.isPresent()) {
             List<ApprovalRuleApprover> chain = approvalRuleApproverRepository
                     .findByRule_RuleIdOrderBySequenceNoAsc(ruleOpt.get().getRuleId());
@@ -193,7 +193,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
                         .collect(Collectors.toList());
             }
         }
-        
+
         // Fallback enterprise logic based on amount
         BigDecimal amt = requisition.getTotalAmount();
         Role managerRole = roleRepository.findByRoleName("Manager").orElseThrow();
@@ -239,7 +239,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
             String requiredRoleName = "Role ID " + requiredRoleId;
             if (requiredRoleId == 3L) requiredRoleName = "Manager";
             else if (requiredRoleId == 4L) requiredRoleName = "Finance";
-            
+
             throw new AccessDeniedException(
                     "This requisition is currently awaiting approval from role: "
                             + requiredRoleName + ". You are not authorized to act on it yet.");
@@ -248,12 +248,29 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         String action = request.getAction().trim().toUpperCase();
 
         if ("APPROVE".equals(action) || "APPROVED".equals(action)) {
-            createHistory(requisition, user, "Approved", request.getRemarks());
+            String roleName = "Approver";
+            if (requiredRoleId == 3L) roleName = "Manager";
+            else if (requiredRoleId == 4L) roleName = "Finance";
+            else if (requiredRoleId == 2L) roleName = "Procurement Admin"; // Assuming 2 is Admin
+            else roleName = "Admin";
+
+            createHistory(requisition, user, "Approved by " + roleName, roleName + " approval completed");
 
             boolean wasLastStep = (completedSteps + 1) == chainRoleIds.size();
             if (wasLastStep) {
-                requisition.setStatus(RequisitionStatus.APPROVED);
-                eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+                if (requisition.getSupplier() != null) {
+                    requisition.setStatus(RequisitionStatus.APPROVED);
+                    eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+                } else {
+                    requisition.setStatus(RequisitionStatus.AWAITING_SUPPLIER_ASSIGNMENT);
+                    notificationService.createNotification(
+                            "admin1", // Using admin1 or we can broadcast, let's just notify the system admin
+                            "Supplier Assignment Required",
+                            "Requisition " + requisition.getRequisitionNumber() + " is fully approved and requires supplier assignment.",
+                            "Requisition",
+                            requisition.getRequisitionId()
+                    );
+                }
             }
             // If it wasn't the last step, status stays PENDING_APPROVAL —
             // the next approver in the chain now sees it in their pending list.
@@ -289,30 +306,87 @@ public class RequisitionService extends BaseService<Requisition, Long> {
     @Transactional
     public Requisition updateSupplier(Long id, Long supplierId, String adminUsername) {
         Requisition requisition = findById(id);
-        
+
         Supplier supplier = supplierRepository.findById(supplierId)
-            .orElseThrow(() -> new ResourceNotFoundException("Supplier not found"));
-            
+                .orElseThrow(() -> new ResourceNotFoundException("Supplier not found"));
+
         requisition.setSupplier(supplier);
-        
+
         User admin = userRepository.findByUsername(adminUsername)
-            .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
-        
+                .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
+
         // Log Audit
         AuditLog audit = AuditLog.builder()
-            .user(admin)
-            .module("Requisition")
-            .action("SUPPLIER_CORRECTED")
-            .entityName("Requisition")
-            .entityId(id)
-            .remarks("Supplier assigned to repair legacy requisition before PO generation.")
-            .build();
+                .user(admin)
+                .module("Requisition")
+                .action("SUPPLIER_ASSIGNED")
+                .entityName("Requisition")
+                .entityId(id)
+                .remarks("Supplier assigned by Procurement Admin.")
+                .build();
         auditLogService.save(audit);
-        
-        // Add to history so it appears in the approval timeline
-        createHistory(requisition, admin, "Supplier Corrected", "Supplier missing in legacy requisition was assigned by Admin.");
-        
+
+        // We do NOT approve the requisition here anymore, just assign the supplier.
         return repository.save(requisition);
+    }
+
+    @Transactional
+    public Requisition verifySupplier(Long id, boolean approved, String remarks, String adminUsername) {
+        Requisition requisition = findById(id);
+
+        if (!RequisitionStatus.AWAITING_SUPPLIER_ASSIGNMENT.equalsIgnoreCase(requisition.getStatus())) {
+            throw new BadRequestException("Requisition is not awaiting supplier assignment.");
+        }
+
+        User admin = userRepository.findByUsername(adminUsername)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
+
+        if (approved) {
+            if (requisition.getSupplier() == null) {
+                throw new BadRequestException("Cannot approve supplier verification when no supplier is assigned.");
+            }
+
+            requisition.setStatus(RequisitionStatus.APPROVED);
+            repository.save(requisition); // save before event
+
+            AuditLog audit = AuditLog.builder()
+                    .user(admin)
+                    .module("Requisition")
+                    .action("SUPPLIER_VERIFIED")
+                    .entityName("Requisition")
+                    .entityId(id)
+                    .remarks("Supplier verified by Procurement Admin.")
+                    .build();
+            auditLogService.save(audit);
+
+            createHistory(requisition, admin, "Supplier Verified", "Supplier verified successfully.");
+
+            // Triggers PO creation via RequisitionEventListener
+            eventPublisher.publishEvent(new RequisitionApprovedEvent(this, requisition));
+        } else {
+            // Reject Supplier
+            if (remarks == null || remarks.trim().isEmpty()) {
+                throw new BadRequestException("Remarks are required when rejecting supplier.");
+            }
+
+            AuditLog audit = AuditLog.builder()
+                    .user(admin)
+                    .module("Requisition")
+                    .action("SUPPLIER_REJECTED")
+                    .entityName("Requisition")
+                    .entityId(id)
+                    .remarks(remarks)
+                    .build();
+            auditLogService.save(audit);
+
+            createHistory(requisition, admin, "Supplier Rejected", remarks);
+
+            // Keeps status as AWAITING_SUPPLIER_ASSIGNMENT but logs the rejection
+            requisition.setSupplier(null); // Clear the rejected supplier
+            repository.save(requisition);
+        }
+
+        return requisition;
     }
 
     public List<String> getApprovalChainNames(Long categoryId, BigDecimal amount, String username) {
@@ -334,7 +408,7 @@ public class RequisitionService extends BaseService<Requisition, Long> {
                         .collect(Collectors.toList());
             }
         }
-        
+
         // Fallback enterprise logic
         if (amount.compareTo(new BigDecimal("50000")) <= 0) {
             return List.of("Manager");
@@ -384,13 +458,6 @@ public class RequisitionService extends BaseService<Requisition, Long> {
     public List<Requisition> findMyApprovals(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
-        
-        boolean isAdmin = user.getUserRoles().stream()
-                .anyMatch(ur -> "Admin".equals(ur.getRole().getRoleName()));
-                
-        if (isAdmin) {
-            return findAll();
-        }
 
         return requisitionHistoryRepository.findByActionBy_UsernameOrderByActionDateDesc(username).stream()
                 .map(RequisitionHistory::getRequisition)

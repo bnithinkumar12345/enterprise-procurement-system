@@ -1,7 +1,7 @@
 import { Check, X, User, Clock } from 'lucide-react';
 import './ProcurementTimeline.css';
 
-export default function ProcurementTimeline({ status, historyEvents = [], submittedDate, submittedBy }) {
+export default function ProcurementTimeline({ status, historyEvents = [], submittedDate, submittedBy, supplierVerificationNode }) {
   const isRejected = status === 'REJECTED';
   const isOrderCreated = status === 'ORDER_CREATED';
   const isApproved = status === 'APPROVED' || isOrderCreated;
@@ -20,10 +20,29 @@ export default function ProcurementTimeline({ status, historyEvents = [], submit
   ];
 
   historyEvents.forEach((event) => {
+    // Filter out duplicate submission events from backend history
+    if (event.step === 'Submitted' || event.step === 'Requisition CREATE' || event.remarks?.includes('Created Requisition') || event.step === 'Approval APPROVE') {
+      return;
+    }
+
     const rejected = event.step === 'Rejected' || event.remarks?.toLowerCase().includes('reject');
+
+    let displayTitle = event.step;
+    if (displayTitle === 'Approved' || displayTitle === 'Approval APPROVE' || event.remarks?.includes('Actioned via detail page')) {
+      displayTitle = 'Approved';
+    }
+    if (displayTitle === 'Approved') {
+      displayTitle = 'Approved by ' + event.actionedBy;
+    }
+
+    let displayDescription = event.remarks || (rejected ? 'This request was rejected.' : 'Approval completed.');
+    if (displayDescription === 'Actioned via detail page' || displayDescription.includes('sequence queue')) {
+      displayDescription = 'Approval completed.';
+    }
+
     steps.push({
-      title: rejected ? 'Rejected' : 'Approved',
-      description: event.remarks || (rejected ? 'This request was rejected.' : 'Signed off by approver.'),
+      title: rejected ? 'Rejected' : displayTitle,
+      description: rejected ? 'This request was rejected.' : displayDescription,
       actionedBy: event.actionedBy,
       date: event.date,
       state: rejected ? 'rejected' : 'completed',
@@ -35,6 +54,16 @@ export default function ProcurementTimeline({ status, historyEvents = [], submit
       title: 'Awaiting Sign-off',
       description: 'Pending signature review in cost-center routing.',
       actionedBy: 'Assigned Sequence',
+      date: null,
+      state: 'active',
+    });
+  }
+
+  if (status === 'AWAITING_SUPPLIER_ASSIGNMENT') {
+    steps.push({
+      title: 'Supplier Assignment',
+      description: 'Pending Procurement Admin supplier assignment.',
+      actionedBy: 'Procurement Admin',
       date: null,
       state: 'active',
     });
@@ -55,7 +84,7 @@ export default function ProcurementTimeline({ status, historyEvents = [], submit
       description: 'Will generate automatically once fully approved.',
       actionedBy: 'System Engine',
       date: null,
-      state: 'upcoming',
+      state: status === 'AWAITING_SUPPLIER_ASSIGNMENT' ? 'upcoming' : 'upcoming',
     });
   }
 
@@ -79,43 +108,49 @@ export default function ProcurementTimeline({ status, historyEvents = [], submit
   }
 
   return (
-    <div className="timeline-container">
-      {steps.map((step, index) => {
-        const initials = step.actionedBy ? step.actionedBy.substring(0, 2).toUpperCase() : 'CC';
-        return (
-          <div key={index} className={`timeline-step-row timeline-step-${step.state}`}>
-            <div className="timeline-badge-column">
-              <div className="timeline-avatar-circle">
-                {step.state === 'completed' ? (
-                  <Check size={14} className="badge-check-icon" />
-                ) : step.state === 'rejected' ? (
-                  <X size={14} className="badge-reject-icon" />
-                ) : step.state === 'active' ? (
-                  <Clock size={14} className="badge-active-icon animate-pulse" />
-                ) : (
-                  <span className="badge-initials">{initials}</span>
-                )}
-              </div>
-              {index !== steps.length - 1 && (
-                <div className={`timeline-connector-line ${step.state === 'completed' ? 'completed' : ''}`} />
-              )}
-            </div>
+      <div className="timeline-container">
+        {steps.map((step, index) => {
+          const initials = step.actionedBy ? step.actionedBy.substring(0, 2).toUpperCase() : 'CC';
+          return (
+              <div key={index} className={`timeline-step-row timeline-step-${step.state}`}>
+                <div className="timeline-badge-column">
+                  <div className="timeline-avatar-circle">
+                    {step.state === 'completed' ? (
+                        <Check size={14} className="badge-check-icon" />
+                    ) : step.state === 'rejected' ? (
+                        <X size={14} className="badge-reject-icon" />
+                    ) : step.state === 'active' ? (
+                        <Clock size={14} className="badge-active-icon animate-pulse" />
+                    ) : (
+                        <span className="badge-initials">{initials}</span>
+                    )}
+                  </div>
+                  {index !== steps.length - 1 && (
+                      <div className={`timeline-connector-line ${step.state === 'completed' ? 'completed' : ''}`} />
+                  )}
+                </div>
 
-            <div className="timeline-details-column">
-              <div className="timeline-step-header">
-                <h4>{step.title}</h4>
-                {step.date && <span className="step-date-stamp">{step.date}</span>}
+                <div className="timeline-details-column">
+                  <div className="timeline-step-header">
+                    <h4>{step.title}</h4>
+                    {step.date && <span className="step-date-stamp">{step.date}</span>}
+                  </div>
+                  <p className="step-description-text">{step.description}</p>
+
+                  <div className="step-actor-info">
+                    <User size={12} className="actor-icon" />
+                    <span>{step.actionedBy}</span>
+                  </div>
+
+                  {step.title === 'Supplier Assignment' && supplierVerificationNode && (
+                      <div style={{ marginTop: '12px' }}>
+                        {supplierVerificationNode}
+                      </div>
+                  )}
+                </div>
               </div>
-              <p className="step-description-text">{step.description}</p>
-              
-              <div className="step-actor-info">
-                <User size={12} className="actor-icon" />
-                <span>{step.actionedBy}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
   );
 }
