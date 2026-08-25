@@ -151,7 +151,6 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
     displayId = propRequest.id;
     displayTitle = propRequest.title;
     displayStatus = propRequest.status;
-    supplierName = propRequest.supplierName || propRequest.supplier?.supplierName || 'Direct';
     displayLineItems = (propRequest.items || []).map((item, idx) => ({
       lineItemId: idx,
       description: item.description,
@@ -179,7 +178,8 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
     submittedBy = requisition.createdBy?.fullName || requisition.createdBy?.username;
     rawJustification = requisition.justification || '';
     categoryName = requisition.category?.categoryName || '—';
-    supplierName = requisition.supplierName || (requisition.supplier ? requisition.supplier.supplierName : 'Direct');
+    const hasSupplier = requisition.supplier != null;
+    supplierName = hasSupplier ? requisition.supplier.supplierName : 'Missing';
     departmentName = requisition.department?.departmentName || '—';
     neededDate = requisition.neededBy || '—';
   }
@@ -201,9 +201,6 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
       deliveryAddress = parsed.deliveryAddress || '—';
       attachmentName = parsed.attachmentName || '';
       internalRemarks = parsed.remarks || '—';
-      if (parsed.supplierName && (!supplierName || supplierName === 'Direct' || supplierName === 'Missing')) {
-        supplierName = parsed.supplierName;
-      }
     }
   } catch {
     // Treat as raw text
@@ -354,6 +351,14 @@ export default function RequestDetail({ request: propRequest, onBack, user }) {
           <div className="detail-card">
             <h3>Logistics & Financial Allocations</h3>
             <div className="meta-details-grid">
+              <div className="meta-field">
+                <span className="field-lbl">Cost Center / Project Code</span>
+                <span className="field-val">{projectCode}</span>
+              </div>
+              <div className="meta-field">
+                <span className="field-lbl">GL Budget Code</span>
+                <span className="field-val">{budgetCode}</span>
+              </div>
               <div className="meta-field col-span-2">
                 <span className="field-lbl">Warehouse Delivery Address</span>
                 <span className="field-val">{deliveryAddress}</span>

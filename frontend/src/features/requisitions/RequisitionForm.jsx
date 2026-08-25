@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../../api";
 import { 
@@ -10,22 +10,9 @@ import {
   ShoppingCart, 
   Clock, 
   ChevronRight, 
-  ArrowLeft,
-  ChevronDown 
+  ArrowLeft 
 } from "lucide-react";
 import "./RequisitionForm.css";
-
-const ENTERPRISE_SUPPLIERS = [
-  { supplierId: 1, supplierName: "Dell India" },
-  { supplierId: 2, supplierName: "HP India" },
-  { supplierId: 3, supplierName: "Lenovo India" },
-  { supplierId: "sup_samsung", supplierName: "Samsung India" },
-  { supplierId: "sup_microsoft", supplierName: "Microsoft India" },
-  { supplierId: "sup_cisco", supplierName: "Cisco India" },
-  { supplierId: "sup_amazon", supplierName: "Amazon Business" },
-  { supplierId: "sup_ibm", supplierName: "IBM India" },
-  { supplierId: "sup_oracle", supplierName: "Oracle India" },
-];
 
 export default function RequisitionForm({ user }) {
   const navigate = useNavigate();
@@ -37,20 +24,19 @@ export default function RequisitionForm({ user }) {
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [supplierId, setSupplierId] = useState("");
-  const [supplierSearch, setSupplierSearch] = useState("");
-  const [isSupplierOpen, setIsSupplierOpen] = useState(false);
-  const supplierRef = useRef(null);
-
   const [priority, setPriority] = useState("MEDIUM");
   const [neededBy, setNeededBy] = useState("");
   const [justification, setJustification] = useState("");
+  const [projectCode, setProjectCode] = useState("");
+  const [budgetCode, setBudgetCode] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [attachmentName, setAttachmentName] = useState("");
   const [remarks, setRemarks] = useState("");
 
   const [approvalChain, setApprovalChain] = useState([]);
   const [loadingChain, setLoadingChain] = useState(false);
   const [categories, setCategories] = useState([]);
-  const [suppliers, setSuppliers] = useState(ENTERPRISE_SUPPLIERS);
+  const [suppliers, setSuppliers] = useState([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [previewError, setPreviewError] = useState("");
@@ -61,17 +47,6 @@ export default function RequisitionForm({ user }) {
     { description: "", quantity: 1, unitPrice: 0 },
   ]);
 
-  // Handle click outside to close supplier dropdown
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (supplierRef.current && !supplierRef.current.contains(event.target)) {
-        setIsSupplierOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   // Load dropdown lists on mount
   useEffect(() => {
     async function loadDropdowns() {
@@ -81,15 +56,7 @@ export default function RequisitionForm({ user }) {
           apiFetch("/api/suppliers", {}, user.token),
         ]);
         setCategories(cats.filter((c) => c.status === "ACTIVE"));
-        
-        const apiSuppliers = sups.filter((s) => s.status === "ACTIVE");
-        const combined = [...apiSuppliers];
-        ENTERPRISE_SUPPLIERS.forEach((es) => {
-          if (!combined.some((s) => s.supplierName.toLowerCase() === es.supplierName.toLowerCase())) {
-            combined.push(es);
-          }
-        });
-        setSuppliers(combined);
+        setSuppliers(sups.filter((s) => s.status === "ACTIVE"));
       } catch {
         setError("Failed to load category or supplier database entries.");
       }
@@ -99,10 +66,9 @@ export default function RequisitionForm({ user }) {
 
   const estimatedTotal = calculateTotal();
 
-  // Dynamic preview timeline follows total Amount only - routing no
-  // longer depends on Category, so the preview shouldn't either.
+  // Dynamic preview timeline matches on Category or total Amount change
   useEffect(() => {
-    if (estimatedTotal <= 0) {
+    if (!categoryId || estimatedTotal <= 0) {
       setApprovalChain([]);
       setPreviewError("");
       return;
@@ -113,7 +79,7 @@ export default function RequisitionForm({ user }) {
       setLoadingChain(true);
       try {
         const data = await apiFetch(
-          `/api/requisitions/preview-approval?amount=${estimatedTotal}`,
+          `/api/requisitions/preview-approval?categoryId=${categoryId}&amount=${estimatedTotal}`,
           {},
           user.token
         );
@@ -125,7 +91,7 @@ export default function RequisitionForm({ user }) {
         console.error("Failed to load approval chain preview", err);
         if (isMounted) {
           setApprovalChain([]);
-          setPreviewError("Unable to load the approval routing preview.");
+          setPreviewError("No approval rule found for this Department, Category, and Amount.");
         }
       } finally {
         if (isMounted) {
@@ -166,48 +132,18 @@ export default function RequisitionForm({ user }) {
     );
   }
 
-
-
   const handleAttachmentChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       setAttachmentName(e.target.files[0].name);
     }
   };
 
-  const handleSupplierInputChange = (e) => {
-    const val = e.target.value;
-    setSupplierSearch(val);
-    setIsSupplierOpen(true);
-
-    const matched = suppliers.find(
-      (s) => s.supplierName.toLowerCase() === val.trim().toLowerCase()
-    );
-    if (matched) {
-      setSupplierId(matched.supplierId);
-    } else {
-      setSupplierId(val);
-    }
-  };
-
-  const handleSelectSupplier = (s) => {
-    setSupplierSearch(s.supplierName);
-    setSupplierId(s.supplierId);
-    setIsSupplierOpen(false);
-  };
-
-  const filteredSuppliers = suppliers.filter((s) =>
-    s.supplierName.toLowerCase().includes(supplierSearch.toLowerCase())
-  );
-
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSuccess("");
 
-    const effectiveSupplierName = supplierSearch.trim() || (suppliers.find(s => s.supplierId === supplierId)?.supplierName || "");
-
-    if (!title || !neededBy || !categoryId || !effectiveSupplierName) {
+    if (!title || !neededBy || !categoryId || !supplierId) {
       setError("Requisition Title, Category, Supplier, and Needed By Date are required.");
       return;
     }
@@ -223,17 +159,14 @@ export default function RequisitionForm({ user }) {
     setSubmitting(true);
 
     try {
-      let resolvedSupplierId = typeof supplierId === "number" ? supplierId : parseInt(supplierId);
-      if (isNaN(resolvedSupplierId)) {
-        resolvedSupplierId = null;
-      }
-
       // Serialize structured enterprise fields inside the justification column
       const structuredJustification = JSON.stringify({
         justification,
+        projectCode,
+        budgetCode,
         deliveryAddress,
+        attachmentName,
         remarks,
-        supplierName: effectiveSupplierName,
       });
 
       const payload = {
@@ -241,9 +174,7 @@ export default function RequisitionForm({ user }) {
         justification: structuredJustification,
         neededBy,
         categoryId: parseInt(categoryId),
-        supplierId: resolvedSupplierId,
-        supplierName: effectiveSupplierName,
-        supplier: effectiveSupplierName,
+        supplierId: supplierId ? parseInt(supplierId) : null,
         priority,
         items: lines.map((line) => ({
           description: line.description,
@@ -267,11 +198,13 @@ export default function RequisitionForm({ user }) {
       setTitle("");
       setCategoryId("");
       setSupplierId("");
-      setSupplierSearch("");
       setPriority("MEDIUM");
       setNeededBy("");
       setJustification("");
+      setProjectCode("");
+      setBudgetCode("");
       setDeliveryAddress("");
+      setAttachmentName("");
       setRemarks("");
       setLines([{ description: "", quantity: 1, unitPrice: 0 }]);
       
@@ -375,97 +308,14 @@ export default function RequisitionForm({ user }) {
                   </select>
                 </div>
 
-                <div className="form-group" ref={supplierRef} style={{ position: 'relative' }}>
+                <div className="form-group">
                   <label>Supplier *</label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <input
-                      type="text"
-                      placeholder="Search or enter supplier..."
-                      value={supplierSearch}
-                      onChange={handleSupplierInputChange}
-                      onFocus={() => setIsSupplierOpen(true)}
-                      required
-                      autoComplete="off"
-                      style={{
-                        width: '100%',
-                        paddingRight: '36px',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <span 
-                      onClick={() => setIsSupplierOpen((prev) => !prev)}
-                      style={{
-                        position: 'absolute',
-                        right: '12px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        cursor: 'pointer',
-                        color: '#6b7280',
-                        display: 'flex',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <ChevronDown size={16} />
-                    </span>
-                  </div>
-
-                  {isSupplierOpen && (
-                    <ul 
-                      style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        right: 0,
-                        maxHeight: '220px',
-                        overflowY: 'auto',
-                        backgroundColor: '#ffffff',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '8px',
-                        boxShadow: 'var(--shadow-hover, 0 4px 12px rgba(0,0,0,0.1))',
-                        zIndex: 1000,
-                        padding: '4px 0',
-                        margin: '4px 0 0 0',
-                        listStyle: 'none'
-                      }}
-                    >
-                      {filteredSuppliers.length > 0 ? (
-                        filteredSuppliers.map((s) => (
-                          <li
-                            key={s.supplierId}
-                            onClick={() => handleSelectSupplier(s)}
-                            style={{
-                              padding: '10px 14px',
-                              fontSize: '13.5px',
-                              color: 'var(--color-black)',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              backgroundColor: (supplierSearch.toLowerCase() === s.supplierName.toLowerCase() || supplierId === s.supplierId) ? 'var(--primary-light, #f0fdf4)' : 'transparent',
-                              fontWeight: (supplierSearch.toLowerCase() === s.supplierName.toLowerCase() || supplierId === s.supplierId) ? '600' : 'normal'
-                            }}
-                            onMouseEnter={(e) => {
-                              if (supplierSearch.toLowerCase() !== s.supplierName.toLowerCase() && supplierId !== s.supplierId) {
-                                e.currentTarget.style.backgroundColor = '#f3f4f6';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              if (supplierSearch.toLowerCase() !== s.supplierName.toLowerCase() && supplierId !== s.supplierId) {
-                                e.currentTarget.style.backgroundColor = 'transparent';
-                              }
-                            }}
-                          >
-                            <span>{s.supplierName}</span>
-                            {s.supplierCode && <span style={{ fontSize: '11px', color: '#9ca3af' }}>{s.supplierCode}</span>}
-                          </li>
-                        ))
-                      ) : (
-                        <li style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', fontStyle: 'italic' }}>
-                          "{supplierSearch}" (Custom supplier)
-                        </li>
-                      )}
-                    </ul>
-                  )}
+                  <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+                    <option value="">Direct / Select Supplier...</option>
+                    {suppliers.map((s) => (
+                      <option key={s.supplierId} value={s.supplierId}>{s.supplierName}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -505,6 +355,28 @@ export default function RequisitionForm({ user }) {
             <div className="form-card animate-fade">
               <h3>2. Cost Allocations & Logistics</h3>
               
+              <div className="form-row-split">
+                <div className="form-group">
+                  <label>Project Cost Code</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. PRJ-2026-ENG"
+                    value={projectCode}
+                    onChange={(e) => setProjectCode(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>GL Budget Code</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. GL-5400-IT"
+                    value={budgetCode}
+                    onChange={(e) => setBudgetCode(e.target.value)}
+                  />
+                </div>
+              </div>
+
               <div className="form-group" style={{ marginTop: "12px", marginBottom: "12px" }}>
                 <label>Delivery Address / Warehouse Dock</label>
                 <textarea
@@ -525,15 +397,27 @@ export default function RequisitionForm({ user }) {
                 />
               </div>
 
-              <div className="form-group" style={{ marginTop: "12px" }}>
-                <label>Internal Remarks / Notes</label>
-                <input
-                  type="text"
-                  placeholder="Additional logistics notes..."
-                  value={remarks}
-                  onChange={(e) => setRemarks(e.target.value)}
-                  style={{ height: '44px' }}
-                />
+              <div className="form-row-split" style={{ marginTop: "12px" }}>
+                <div className="form-group">
+                  <label>Quote / SLA Attachment (PDF/Image)</label>
+                  <div className="file-input-wrapper">
+                    <input type="file" id="fileQuote" onChange={handleAttachmentChange} style={{ display: "none" }} />
+                    <label htmlFor="fileQuote" className="btn-file-select" style={{ height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {attachmentName ? "Attached: " + attachmentName : "Attach Quote Document..."}
+                    </label>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Internal Remarks / Notes</label>
+                  <input
+                    type="text"
+                    placeholder="Additional logistics notes..."
+                    value={remarks}
+                    onChange={(e) => setRemarks(e.target.value)}
+                    style={{ height: '44px' }}
+                  />
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '24px' }}>
@@ -689,7 +573,7 @@ export default function RequisitionForm({ user }) {
               </div>
             ) : approvalChain.length === 0 ? (
               <div className="preview-state-message empty">
-                <p>Add requested items to display the approval sequence timeline.</p>
+                <p>Select a Category and add requested items to display the approval sequence timeline.</p>
               </div>
             ) : (
               <div className="preview-timeline-wrapper">

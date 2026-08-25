@@ -15,7 +15,7 @@ public interface RequisitionHistoryRepository extends JpaRepository<RequisitionH
 
     long countByRequisition_RequisitionIdAndStep(Long requisitionId, String step);
 
-    @Query("SELECT COUNT(h) FROM RequisitionHistory h WHERE h.requisition.requisitionId = :reqId AND h.step = 'Approved' " +
+    @Query("SELECT COUNT(h) FROM RequisitionHistory h WHERE h.requisition.requisitionId = :reqId AND h.step LIKE 'Approved%' " +
            "AND h.historyId > (SELECT COALESCE(MAX(h2.historyId), 0) FROM RequisitionHistory h2 WHERE h2.requisition.requisitionId = :reqId AND h2.step IN ('Submitted', 'Returned'))")
     long countCurrentCycleApprovals(@org.springframework.data.repository.query.Param("reqId") Long requisitionId);
 }

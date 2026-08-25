@@ -122,41 +122,21 @@ public class RequisitionService extends BaseService<Requisition, Long> {
                 .orElseThrow(() -> new ResourceNotFoundException("Category not found with id " + request.getCategoryId()));
 
         Supplier supplier = null;
-        String effectiveSupplierName = request.getSupplierName();
-        if (effectiveSupplierName == null || effectiveSupplierName.isBlank()) {
-            effectiveSupplierName = request.getSupplier();
-        }
-
         if (request.getSupplierId() != null) {
-            supplier = supplierRepository.findById(request.getSupplierId()).orElse(null);
-            if (supplier != null && (effectiveSupplierName == null || effectiveSupplierName.isBlank())) {
-                effectiveSupplierName = supplier.getSupplierName();
-            }
-        }
-
-        if (supplier == null && effectiveSupplierName != null && !effectiveSupplierName.isBlank()) {
-            final String lookupName = effectiveSupplierName.trim();
-            Optional<Supplier> matched = supplierRepository.findAll().stream()
-                    .filter(s -> s.getSupplierName().equalsIgnoreCase(lookupName))
-                    .findFirst();
-            if (matched.isPresent()) {
-                supplier = matched.get();
-                effectiveSupplierName = supplier.getSupplierName();
-            }
-        }
-
-        if ((effectiveSupplierName == null || effectiveSupplierName.isBlank()) && supplier == null) {
-            throw new BadRequestException("Supplier is required");
+            supplier = supplierRepository.findById(request.getSupplierId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Supplier not found with id " + request.getSupplierId()));
         }
 
         BigDecimal totalAmount = calculateTotalAmount(request.getItems());
+
+        Optional<ApprovalRule> matchingRule = approvalRuleRepository
+                .findMatchingRule(department.getDepartmentId(), category.getCategoryId(), totalAmount);
 
         Requisition requisition = new Requisition();
         requisition.setRequisitionNumber(generateRequisitionNumber());
         requisition.setCreatedBy(user);
         requisition.setDepartment(department);
         requisition.setSupplier(supplier);
-        requisition.setSupplierName(effectiveSupplierName != null && !effectiveSupplierName.isBlank() ? effectiveSupplierName.trim() : (supplier != null ? supplier.getSupplierName() : null));
         requisition.setCategory(category);
         requisition.setTitle(request.getTitle());
         requisition.setJustification(request.getJustification());
@@ -199,12 +179,30 @@ public class RequisitionService extends BaseService<Requisition, Long> {
     // ---------------------------------------------------------------
 
     private List<Long> getApprovalChainRoleIds(Requisition requisition) {
+        Optional<ApprovalRule> ruleOpt = approvalRuleRepository.findMatchingRule(
+                requisition.getDepartment().getDepartmentId(),
+                requisition.getCategory().getCategoryId(),
+                requisition.getTotalAmount());
+        
+        if (ruleOpt.isPresent()) {
+            List<ApprovalRuleApprover> chain = approvalRuleApproverRepository
+                    .findByRule_RuleIdOrderBySequenceNoAsc(ruleOpt.get().getRuleId());
+            if (!chain.isEmpty()) {
+                return chain.stream()
+                        .map(approver -> approver.getRole().getRoleId())
+                        .collect(Collectors.toList());
+            }
+        }
+        
+        // Fallback enterprise logic based on amount
+        BigDecimal amt = requisition.getTotalAmount();
         Role managerRole = roleRepository.findByRoleName("Manager").orElseThrow();
         Role financeRole = roleRepository.findByRoleName("Finance").orElseThrow();
         Role adminRole = roleRepository.findByRoleName("Admin").orElseThrow();
 
-        BigDecimal amt = requisition.getTotalAmount();
-        if (amt.compareTo(HIGH_VALUE_THRESHOLD) <= 0) {
+        if (amt.compareTo(new BigDecimal("50000")) <= 0) {
+            return List.of(managerRole.getRoleId());
+        } else if (amt.compareTo(new BigDecimal("500000")) <= 0) {
             return List.of(managerRole.getRoleId(), financeRole.getRoleId());
         } else {
             return List.of(managerRole.getRoleId(), financeRole.getRoleId(), adminRole.getRoleId());
@@ -296,7 +294,6 @@ public class RequisitionService extends BaseService<Requisition, Long> {
             .orElseThrow(() -> new ResourceNotFoundException("Supplier not found"));
             
         requisition.setSupplier(supplier);
-        requisition.setSupplierName(supplier.getSupplierName());
         
         User admin = userRepository.findByUsername(adminUsername)
             .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
@@ -318,24 +315,30 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         return repository.save(requisition);
     }
 
-    // Amount above which a third approver (Procurement Admin) is required
-    // in addition to Manager and Finance. Same threshold used for both the
-    // live preview (getApprovalChainNames) and actual routing
-    // (getApprovalChainRoleIds), so what a requester sees before submitting
-    // always matches what actually happens after submitting.
-    private static final BigDecimal HIGH_VALUE_THRESHOLD = new BigDecimal("500000");
-
-    /**
-     * Approval routing is intentionally the same for every requester,
-     * regardless of department or category - only the order amount
-     * decides the chain. (Previously this consulted per-department/
-     * per-category rows in approval_rules, which only covered a couple of
-     * narrow combinations and caused wildly different flows for different
-     * users - some requesters needed just one approver, others skipped
-     * Manager entirely, depending on which row happened to match.)
-     */
     public List<String> getApprovalChainNames(Long categoryId, BigDecimal amount, String username) {
-        if (amount.compareTo(HIGH_VALUE_THRESHOLD) <= 0) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
+
+        Department department = departmentRepository.findById(user.getDepartment().getDepartmentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Department not found for current user"));
+
+        Optional<ApprovalRule> matchingRule = approvalRuleRepository
+                .findMatchingRule(department.getDepartmentId(), categoryId, amount);
+
+        if (matchingRule.isPresent()) {
+            List<ApprovalRuleApprover> chain = approvalRuleApproverRepository
+                    .findByRule_RuleIdOrderBySequenceNoAsc(matchingRule.get().getRuleId());
+            if (!chain.isEmpty()) {
+                return chain.stream()
+                        .map(approver -> approver.getRole().getRoleName())
+                        .collect(Collectors.toList());
+            }
+        }
+        
+        // Fallback enterprise logic
+        if (amount.compareTo(new BigDecimal("50000")) <= 0) {
+            return List.of("Manager");
+        } else if (amount.compareTo(new BigDecimal("500000")) <= 0) {
             return List.of("Manager", "Finance");
         } else {
             return List.of("Manager", "Finance", "Admin");

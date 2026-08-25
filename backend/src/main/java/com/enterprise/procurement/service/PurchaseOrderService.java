@@ -51,6 +51,13 @@ public class PurchaseOrderService extends BaseService<PurchaseOrder, Long> {
             throw new IllegalArgumentException("Cannot generate Purchase Order: Requisition is missing a supplier.");
         }
 
+        // Idempotency: Prevent duplicate PO for the same requisition
+        java.util.Optional<PurchaseOrder> existingPo = ((PurchaseOrderRepository) repository)
+                .findByRequisition_RequisitionId(requisition.getRequisitionId());
+        if (existingPo.isPresent()) {
+            return existingPo.get();
+        }
+
         String poNumber = "PO-" + requisition.getRequisitionNumber().replace("REQ-", "");
         
         java.math.BigDecimal reqAmt = requisition.getTotalAmount() != null ? requisition.getTotalAmount() : java.math.BigDecimal.ZERO;

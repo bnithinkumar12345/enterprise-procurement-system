@@ -124,7 +124,7 @@ export default function DashboardLayout({ user, onLogout, children }) {
         items: [
           { path: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
           { path: '/approvals', label: 'Finance Approvals', icon: <Wallet size={20} /> },
-          { path: '/payments', label: 'Payments & Invoices', icon: <Wallet size={20} /> },
+          { path: '/approvals?tab=history', label: 'Approval History', icon: <Wallet size={20} /> },
           { path: '/reports', label: 'Reports', icon: <BarChart3 size={20} /> },
           { path: '/profile', label: 'Profile', icon: <UserCircle size={20} /> }
         ]
@@ -181,7 +181,7 @@ export default function DashboardLayout({ user, onLogout, children }) {
     ],
     [FINANCE]: [
       { path: '/approvals', label: 'Finance Approvals', icon: <Wallet size={20} /> },
-      { path: '/payments', label: 'Payments & Invoices', icon: <Wallet size={20} /> },
+      { path: '/approvals?tab=history', label: 'Approval History', icon: <Wallet size={20} /> },
       { path: '/reports', label: 'Reports', icon: <BarChart3 size={20} /> },
     ],
     [RECEIVER]: [
