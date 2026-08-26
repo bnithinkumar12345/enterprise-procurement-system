@@ -315,6 +315,38 @@ public class RequisitionService extends BaseService<Requisition, Long> {
         return repository.save(requisition);
     }
 
+    @Transactional
+    public Requisition verifySupplier(Long id, boolean approved, String remarks, String adminUsername) {
+        Requisition requisition = findById(id);
+        User admin = userRepository.findByUsername(adminUsername)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin user not found"));
+
+        if (approved && requisition.getSupplier() == null
+                && (requisition.getSupplierName() == null || requisition.getSupplierName().isBlank())) {
+            throw new BadRequestException("A supplier must be assigned before verification");
+        }
+
+        String action = approved ? "SUPPLIER_VERIFIED" : "SUPPLIER_REJECTED";
+        requisition.setStatus(approved ? RequisitionStatus.APPROVED : RequisitionStatus.REJECTED);
+        createHistory(requisition, admin, approved ? "Supplier Verified" : "Supplier Rejected", remarks);
+
+        AuditLog audit = AuditLog.builder()
+                .user(admin)
+                .module("Requisition")
+                .action(action)
+                .entityName("Requisition")
+                .entityId(id)
+                .remarks(remarks)
+                .build();
+        auditLogService.save(audit);
+
+        Requisition savedRequisition = repository.save(requisition);
+        if (approved) {
+            eventPublisher.publishEvent(new RequisitionApprovedEvent(this, savedRequisition));
+        }
+        return savedRequisition;
+    }
+
     public List<String> getApprovalChainNames(Long categoryId, BigDecimal amount, String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + username));
